@@ -34,7 +34,7 @@ loop:
 			var err error
 			offset, err = telegram.GetUpdates(telegramUrl, token, offset)
 			if err != nil {
-				log.Fatal(err)
+				log.Printf("something went wrong %s", err)
 			}
 		}
 		time.Sleep(1 * time.Second)
