@@ -26,9 +26,8 @@ func main() {
 loop:
 	for {
 		select {
-		case <-ctx.Done():
-			// ctrl + c
-			fmt.Println("выход")
+		case <-ctx.Done(): // ctrl + c
+			fmt.Println("shutting down")
 			break loop
 		default:
 			var err error
