@@ -6,7 +6,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
-	"ratewatch/telegram"
+	"ratewatch/internal/telegram"
 	"time"
 
 	"github.com/joho/godotenv"
