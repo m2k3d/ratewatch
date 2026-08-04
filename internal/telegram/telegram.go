@@ -2,6 +2,7 @@ package telegram
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -43,6 +44,34 @@ type SendMessageResponse struct {
 	ErrorCode   int    `json:"error_code"`
 }
 
+func GetUpdates(telegramUrl string, offset int) ([]Update, error) {
+	q := url.Values{}
+	q.Set("offset", strconv.Itoa(offset))
+	fullURL := telegramUrl + "?" + q.Encode()
+
+	resp, err := client.Get(fullURL)
+	if err != nil {
+		return nil, errors.New("can't do GET request")
+	}
+	defer resp.Body.Close()
+
+	ans, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("can't read response: %w", err)
+	}
+
+	var r Response
+	err = json.Unmarshal(ans, &r)
+	if err != nil {
+		return nil, fmt.Errorf("can't unmarshal: %w", err)
+	}
+	if !r.Ok {
+		return nil, fmt.Errorf("error from the telegram: %s. Error code: %d", r.Description, r.ErrorCode)
+	}
+
+	return r.Result, nil
+}
+
 func SendMessage(chatID int64, text string, t string) error {
 	apiURL := "https://api.telegram.org/bot" + t + "/sendMessage"
 
@@ -54,7 +83,7 @@ func SendMessage(chatID int64, text string, t string) error {
 
 	resp, err := client.Get(fullURL)
 	if err != nil {
-		return fmt.Errorf("can't do the request: %s", err.Error())
+		return errors.New("can't do GET request")
 	}
 	defer resp.Body.Close()
 
@@ -73,40 +102,4 @@ func SendMessage(chatID int64, text string, t string) error {
 	}
 
 	return nil
-}
-
-func GetUpdates(telegramUrl, token string, offset int) (int, error) {
-	q := url.Values{}
-	q.Set("offset", strconv.Itoa(offset))
-	fullURL := telegramUrl + "?" + q.Encode()
-
-	resp, err := client.Get(fullURL)
-	if err != nil {
-		return offset, fmt.Errorf("can't do the request: %s", err.Error())
-	}
-	defer resp.Body.Close()
-
-	ans, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return offset, fmt.Errorf("can't read response: %w", err)
-	}
-
-	var r Response
-	err = json.Unmarshal(ans, &r)
-	if err != nil {
-		return offset, fmt.Errorf("can't unmarshal: %w", err)
-	}
-	if !r.Ok {
-		return offset, fmt.Errorf("error from the telegram: %s. Error code: %d", r.Description, r.ErrorCode)
-	}
-
-	for _, u := range r.Result {
-		err = SendMessage(u.Message.Chat.ID, u.Message.Text, token)
-		if err != nil {
-			return offset, fmt.Errorf("can't send message: %w", err)
-		}
-		offset = u.UpdateID + 1
-	}
-
-	return offset, nil
 }

@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/signal"
 	"ratewatch/internal/telegram"
+	"ratewatch/internal/telegram/bot"
 	"time"
 
 	"github.com/joho/godotenv"
@@ -31,9 +32,16 @@ loop:
 			break loop
 		default:
 			var err error
-			offset, err = telegram.GetUpdates(telegramUrl, token, offset)
+			var updates []telegram.Update
+
+			updates, err = telegram.GetUpdates(telegramUrl, offset)
 			if err != nil {
-				log.Printf("something went wrong %s", err)
+				log.Printf("something went wrong while trying to get updates: %s", err)
+			} else {
+				offset, err = bot.Logic(updates, token, offset)
+				if err != nil {
+					log.Printf("something went wrong in logic part: %s", err)
+				}
 			}
 		}
 		time.Sleep(1 * time.Second)
