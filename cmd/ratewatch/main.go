@@ -4,41 +4,47 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"net/http"
 	"os"
 	"os/signal"
 	"ratewatch/internal/telegram"
-	"ratewatch/internal/telegram/bot"
 	"time"
 
 	"github.com/joho/godotenv"
 )
 
 func main() {
+	var client = http.Client{
+		Timeout: 5 * time.Second,
+	}
 	offset := 0
 
 	token := mustToken()
-
-	telegramUrl := "https://api.telegram.org/bot" + token + "/getUpdates"
 
 	// input to the terminal
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 
-loop:
+	bot, err := telegram.New(token, client, offset)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+Loop:
 	for {
 		select {
 		case <-ctx.Done(): // ctrl + c
 			fmt.Println("shutting down")
-			break loop
+			break Loop
 		default:
 			var err error
 			var updates []telegram.Update
 
-			updates, err = telegram.GetUpdates(telegramUrl, offset)
+			updates, err = bot.GetUpdates()
 			if err != nil {
 				log.Printf("something went wrong while trying to get updates: %s", err)
 			} else {
-				offset, err = bot.Logic(updates, token, offset)
+				err = bot.Logic(updates)
 				if err != nil {
 					log.Printf("something went wrong in logic part: %s", err)
 				}

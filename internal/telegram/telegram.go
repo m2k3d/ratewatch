@@ -8,12 +8,8 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
-	"time"
+	"strings"
 )
-
-var client = http.Client{
-	Timeout: 5 * time.Second,
-}
 
 type Response struct {
 	Ok          bool     `json:"ok"`
@@ -44,14 +40,34 @@ type SendMessageResponse struct {
 	ErrorCode   int    `json:"error_code"`
 }
 
-func GetUpdates(telegramUrl string, offset int) ([]Update, error) {
-	q := url.Values{}
-	q.Set("offset", strconv.Itoa(offset))
-	fullURL := telegramUrl + "?" + q.Encode()
+type Bot struct {
+	Token  string
+	Client http.Client
+	Offset int
+}
 
-	resp, err := client.Get(fullURL)
+func New(token string, client http.Client, offset int) (*Bot, error) {
+	if strings.TrimSpace(token) == "" {
+		return nil, errors.New("bot token must be specified")
+	}
+	return &Bot{
+		Token:  token,
+		Client: client,
+		Offset: offset,
+	}, nil
+}
+
+func (b *Bot) GetUpdates() ([]Update, error) {
+	apiURL := "https://api.telegram.org/bot" + b.Token + "/getUpdates"
+
+	q := url.Values{}
+	q.Set("offset", strconv.Itoa(b.Offset))
+	fullURL := apiURL + "?" + q.Encode()
+
+	resp, err := b.Client.Get(fullURL)
 	if err != nil {
-		return nil, errors.New("can't do GET request")
+		errWithNoToken := sanitize(string(err.Error()), b.Token)
+		return nil, fmt.Errorf("%s", errWithNoToken)
 	}
 	defer resp.Body.Close()
 
@@ -72,8 +88,8 @@ func GetUpdates(telegramUrl string, offset int) ([]Update, error) {
 	return r.Result, nil
 }
 
-func SendMessage(chatID int64, text string, t string) error {
-	apiURL := "https://api.telegram.org/bot" + t + "/sendMessage"
+func (b *Bot) SendMessage(chatID int64, text string) error {
+	apiURL := "https://api.telegram.org/bot" + b.Token + "/sendMessage"
 
 	q := url.Values{}
 	q.Set("chat_id", strconv.FormatInt(chatID, 10))
@@ -81,9 +97,10 @@ func SendMessage(chatID int64, text string, t string) error {
 
 	fullURL := apiURL + "?" + q.Encode()
 
-	resp, err := client.Get(fullURL)
+	resp, err := b.Client.Get(fullURL)
 	if err != nil {
-		return errors.New("can't do GET request")
+		errWithNoToken := sanitize(string(err.Error()), b.Token)
+		return fmt.Errorf("%s", errWithNoToken)
 	}
 	defer resp.Body.Close()
 
@@ -102,4 +119,25 @@ func SendMessage(chatID int64, text string, t string) error {
 	}
 
 	return nil
+}
+
+func (b *Bot) Logic(result []Update) error {
+	for _, u := range result {
+		err := b.SendMessage(u.Message.Chat.ID, u.Message.Text)
+		if err != nil {
+			b.Offset = u.UpdateID + 1
+			return fmt.Errorf("can't send message: %w", err)
+		}
+
+		b.Offset = u.UpdateID + 1
+	}
+
+	return nil
+}
+
+func sanitize(s, token string) string {
+	if token == "" {
+		return s
+	}
+	return strings.ReplaceAll(s, token, "#####")
 }
