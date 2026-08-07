@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"ratewatch/internal/bot"
 	"ratewatch/internal/telegram"
 	"time"
 
@@ -25,7 +26,12 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 
-	bot, err := telegram.New(token, client, offset)
+	tClient, err := telegram.New(token, client, offset)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	app, err := bot.New(tClient)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -40,11 +46,11 @@ Loop:
 			var err error
 			var updates []telegram.Update
 
-			updates, err = bot.GetUpdates()
+			updates, err = tClient.GetUpdates()
 			if err != nil {
 				log.Printf("something went wrong while trying to get updates: %s", err)
 			} else {
-				err = bot.Logic(updates)
+				err = app.HandleUpdates(updates)
 				if err != nil {
 					log.Printf("something went wrong in logic part: %s", err)
 				}
