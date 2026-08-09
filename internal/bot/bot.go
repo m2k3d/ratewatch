@@ -9,6 +9,8 @@ import (
 	"strings"
 )
 
+var ErrMessageNotTemplated = errors.New("non-templated message")
+
 type Bot struct {
 	TelegramClient *telegram.Client
 }
@@ -29,36 +31,50 @@ func New(tc *telegram.Client) (*Bot, error) {
 }
 
 func (b *Bot) HandleUpdates(result []telegram.Update) error {
+	var errs error
+
 	for _, u := range result {
 		switch u.Message.Text {
 		case "/help":
 			err := b.TelegramClient.SendMessage(u.Message.Chat.ID, "there will be help here")
 			if err != nil {
-				return fmt.Errorf("can't send message when user sent /help: %w", err)
+				errs = errors.Join(errs, fmt.Errorf("can't send message when user sent /help: %w", err))
+				continue
 			}
 		default:
 			r, err := newRule(u.Message.Text)
-			if err != nil {
-				return err
+			if err != nil && errors.Is(err, ErrMessageNotTemplated) {
+				err = b.TelegramClient.SendMessage(u.Message.Chat.ID, "didn't understand, send \\help")
+				if err != nil {
+					errs = errors.Join(errs, fmt.Errorf("failed to send unknown command message: %w", err))
+					continue
+				}
+				continue
+			} else if err != nil {
+				errs = errors.Join(errs, fmt.Errorf("failed to process non template message: %w", err))
+				continue
 			}
+
 			switch {
 			case r != nil:
 				s := strconv.Itoa(int(r.Amount)) + r.Currency + r.Op + "idk"
 				err := b.TelegramClient.SendMessage(u.Message.Chat.ID, s)
 				if err != nil {
-					return fmt.Errorf("can't send message in Rule branch: %w", err)
+					errs = errors.Join(errs, fmt.Errorf("can't send message in Rule branch: %w", err))
+					continue
 				}
 			default:
 				err := b.TelegramClient.SendMessage(u.Message.Chat.ID, "didn't understand, send \\help")
 				if err != nil {
-					return fmt.Errorf("can't send message, \"default\" branch: %w", err)
+					errs = errors.Join(errs, fmt.Errorf("can't send message, \"default\" branch: %w", err))
+					continue
 				}
 			}
 		}
 
 	}
 
-	return nil
+	return errs
 }
 
 func newRule(m string) (*Rule, error) {
@@ -67,7 +83,7 @@ func newRule(m string) (*Rule, error) {
 
 	wordsArray := strings.Split(m, " ")
 	if len(wordsArray) != 3 {
-		return nil, errors.New("non-templated message")
+		return nil, ErrMessageNotTemplated
 	}
 
 	if c := slices.Contains(currencies, wordsArray[0]); !c {
@@ -91,18 +107,3 @@ func newRule(m string) (*Rule, error) {
 		Amount:   amount,
 	}, nil
 }
-
-/*
-	case "/btc":
-		req, err := makeRequest()
-		if err != nil {
-			return fmt.Errorf("got the error while trying to construct the request: %w", err)
-		}
-*/
-
-/*
-	err := b.TelegramClient.SendMessage(u.Message.Chat.ID, u.Message.Text)
-	if err != nil {
-		return fmt.Errorf("can't send message: %w", err)
-	}
-*/
