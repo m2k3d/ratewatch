@@ -44,14 +44,18 @@ func (b *Bot) HandleUpdates(result []telegram.Update) error {
 		default:
 			r, err := newRule(u.Message.Text)
 			if err != nil && errors.Is(err, ErrMessageNotTemplated) {
-				err = b.TelegramClient.SendMessage(u.Message.Chat.ID, "didn't understand, send \\help")
+				err = b.TelegramClient.SendMessage(u.Message.Chat.ID, "didn't understand, send /help")
 				if err != nil {
-					errs = errors.Join(errs, fmt.Errorf("failed to send unknown command message: %w", err))
+					errs = errors.Join(errs, fmt.Errorf("failed to send message: %w", err))
 					continue
 				}
 				continue
 			} else if err != nil {
-				errs = errors.Join(errs, fmt.Errorf("failed to process non template message: %w", err))
+				err = b.TelegramClient.SendMessage(u.Message.Chat.ID, err.Error())
+				if err != nil {
+					errs = errors.Join(errs, fmt.Errorf("failed to send unknown command message: %w", err))
+					continue
+				}
 				continue
 			}
 
@@ -64,7 +68,7 @@ func (b *Bot) HandleUpdates(result []telegram.Update) error {
 					continue
 				}
 			default:
-				err := b.TelegramClient.SendMessage(u.Message.Chat.ID, "didn't understand, send \\help")
+				err := b.TelegramClient.SendMessage(u.Message.Chat.ID, "didn't understand, send /help")
 				if err != nil {
 					errs = errors.Join(errs, fmt.Errorf("can't send message, \"default\" branch: %w", err))
 					continue
@@ -78,6 +82,8 @@ func (b *Bot) HandleUpdates(result []telegram.Update) error {
 }
 
 func newRule(m string) (*Rule, error) {
+	var errs error
+
 	currencies := []string{"btc", "eth", "ton"}
 	operators := []string{"<", "=", ">"}
 
@@ -87,20 +93,23 @@ func newRule(m string) (*Rule, error) {
 	}
 
 	if c := slices.Contains(currencies, wordsArray[0]); !c {
-		return nil, errors.New("invalid currency")
+		errs = errors.Join(errs, errors.New("invalid currency"))
 	}
 	if c := slices.Contains(operators, wordsArray[1]); !c {
-		return nil, errors.New("invalid operator")
+		errs = errors.Join(errs, errors.New("invalid operator"))
 	}
 
 	amount, err := strconv.ParseFloat(wordsArray[2], 64)
 	if err != nil {
-		return nil, errors.New("wrong amount")
+		errs = errors.Join(errs, errors.New("wrong amount"))
 	}
 	if amount < 0.0 {
-		return nil, errors.New("amount can't be less than 0")
+		errs = errors.Join(errs, errors.New("amount can't be less than 0"))
 	}
 
+	if errs != nil {
+		return nil, errs
+	}
 	return &Rule{
 		Currency: wordsArray[0],
 		Op:       wordsArray[1],
