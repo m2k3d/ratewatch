@@ -9,8 +9,6 @@ import (
 	"strings"
 )
 
-var ErrMessageNotTemplated = errors.New("non-templated message")
-
 type Bot struct {
 	TelegramClient *telegram.Client
 }
@@ -59,21 +57,14 @@ func (b *Bot) HandleUpdates(result []telegram.Update) error {
 				continue
 			}
 
-			switch {
-			case r != nil:
-				s := strconv.Itoa(int(r.Amount)) + r.Currency + r.Op + "idk"
-				err := b.TelegramClient.SendMessage(u.Message.Chat.ID, s)
-				if err != nil {
-					errs = errors.Join(errs, fmt.Errorf("can't send message in Rule branch: %w", err))
-					continue
-				}
-			default:
-				err := b.TelegramClient.SendMessage(u.Message.Chat.ID, "didn't understand, send /help")
-				if err != nil {
-					errs = errors.Join(errs, fmt.Errorf("can't send message, \"default\" branch: %w", err))
-					continue
-				}
+			// logic what to do after getting the correct user input
+			s := strconv.Itoa(int(r.Amount)) + r.Currency + r.Op + "idk"
+			err = b.TelegramClient.SendMessage(u.Message.Chat.ID, s)
+			if err != nil {
+				errs = errors.Join(errs, fmt.Errorf("can't send message in Rule branch: %w", err))
+				continue
 			}
+
 		}
 
 	}
@@ -81,30 +72,45 @@ func (b *Bot) HandleUpdates(result []telegram.Update) error {
 	return errs
 }
 
+var (
+	invalidCurrency               = errors.New("invalid currency")
+	invalidOperator               = errors.New("invalid operator")
+	wrongAmount                   = errors.New("wrong amount")
+	lowAmount                     = errors.New("amount can't be less than 0")
+	ErrMessageNotTemplated        = errors.New("non-templated message")
+	invalidOperatorWithZeroAmount = errors.New("invalid operator \"<\" with 0 amount")
+)
+
 func newRule(m string) (*Rule, error) {
+
 	var errs error
 
 	currencies := []string{"btc", "eth", "ton"}
 	operators := []string{"<", "=", ">"}
 
-	wordsArray := strings.Split(m, " ")
+	wordsArray := strings.Fields(m)
+
 	if len(wordsArray) != 3 {
 		return nil, ErrMessageNotTemplated
 	}
 
 	if c := slices.Contains(currencies, wordsArray[0]); !c {
-		errs = errors.Join(errs, errors.New("invalid currency"))
+		errs = errors.Join(errs, invalidCurrency)
 	}
 	if c := slices.Contains(operators, wordsArray[1]); !c {
-		errs = errors.Join(errs, errors.New("invalid operator"))
+		errs = errors.Join(errs, invalidOperator)
 	}
 
 	amount, err := strconv.ParseFloat(wordsArray[2], 64)
 	if err != nil {
-		errs = errors.Join(errs, errors.New("wrong amount"))
+		errs = errors.Join(errs, wrongAmount)
 	}
 	if amount < 0.0 {
-		errs = errors.Join(errs, errors.New("amount can't be less than 0"))
+		errs = errors.Join(errs, lowAmount)
+	}
+
+	if wordsArray[1] == "<" && amount == 0 {
+		errs = errors.Join(errs, invalidOperatorWithZeroAmount)
 	}
 
 	if errs != nil {
