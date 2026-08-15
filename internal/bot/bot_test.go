@@ -75,6 +75,9 @@ func TestNewRule(t *testing.T) {
 		t.Errorf("test 8. Incorrect error - want \"%s\", got: \"%s\"", wrongAmount, err)
 		return
 	}
+	if errors.Is(err, invalidOperatorWithZeroAmount) {
+		t.Errorf("test 8. Shouldn't be invalidOperatorWithZeroAmount, got: %v", err)
+	}
 
 	// 9 - every word is wrong
 	s = "wrongWord wrongWord wrongWord"

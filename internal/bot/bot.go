@@ -104,13 +104,12 @@ func newRule(m string) (*Rule, error) {
 	amount, err := strconv.ParseFloat(wordsArray[2], 64)
 	if err != nil {
 		errs = errors.Join(errs, wrongAmount)
-	}
-	if amount < 0.0 {
-		errs = errors.Join(errs, lowAmount)
+	} else if wordsArray[1] == "<" && amount == 0 {
+		errs = errors.Join(errs, invalidOperatorWithZeroAmount)
 	}
 
-	if wordsArray[1] == "<" && amount == 0 {
-		errs = errors.Join(errs, invalidOperatorWithZeroAmount)
+	if amount < 0.0 {
+		errs = errors.Join(errs, lowAmount)
 	}
 
 	if errs != nil {
