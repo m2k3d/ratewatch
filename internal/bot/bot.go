@@ -3,10 +3,11 @@ package bot
 import (
 	"errors"
 	"fmt"
-	"ratewatch/internal/telegram"
 	"slices"
 	"strconv"
 	"strings"
+
+	"ratewatch/internal/telegram"
 )
 
 type Bot struct {
@@ -28,7 +29,7 @@ func New(tc *telegram.Client) (*Bot, error) {
 	}, nil
 }
 
-func (b *Bot) HandleUpdates(result []telegram.Update) error {
+func (b *Bot) HandleUpdates(result []telegram.Update, telegramCh chan<- string) error {
 	var errs error
 
 	for _, u := range result {
@@ -58,15 +59,14 @@ func (b *Bot) HandleUpdates(result []telegram.Update) error {
 			}
 
 			// logic what to do after getting the correct user input
-			s := strconv.Itoa(int(r.Amount)) + r.Currency + r.Op + "idk"
-			err = b.TelegramClient.SendMessage(u.Message.Chat.ID, s)
-			if err != nil {
-				errs = errors.Join(errs, fmt.Errorf("can't send message in Rule branch: %w", err))
-				continue
-			}
-
+			s := strconv.Itoa(int(r.Amount)) + r.Currency + r.Op
+			telegramCh <- s
+			//			err = b.TelegramClient.SendMessage(u.Message.Chat.ID, s)
+			//			if err != nil {
+			//				errs = errors.Join(errs, fmt.Errorf("can't send message in Rule branch: %w", err))
+			//				continue
+			//			}
 		}
-
 	}
 
 	return errs
@@ -82,7 +82,6 @@ var (
 )
 
 func newRule(m string) (*Rule, error) {
-
 	var errs error
 
 	currencies := []string{"btc", "eth", "ton"}
