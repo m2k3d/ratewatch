@@ -43,11 +43,6 @@ func New(symbol string) (*Client, error) {
 func (c *Client) RequestHandler(binanceCh chan<- Trade, ctx context.Context) error {
 	defer fmt.Println("RequestHandler is finishing its work")
 
-	go func() {
-		<-ctx.Done()
-		c.Conn.Close()
-	}()
-
 	var UnmarshalMsg Trade
 
 	for {
