@@ -59,13 +59,8 @@ func (b *Bot) HandleUpdates(result []telegram.Update, telegramCh chan<- string) 
 			}
 
 			// logic what to do after getting the correct user input
-			s := strconv.Itoa(int(r.Amount)) + r.Currency + r.Op
+			s := strconv.FormatFloat(r.Amount, 'f', -1, 64) + r.Currency + r.Op
 			telegramCh <- s
-			//			err = b.TelegramClient.SendMessage(u.Message.Chat.ID, s)
-			//			if err != nil {
-			//				errs = errors.Join(errs, fmt.Errorf("can't send message in Rule branch: %w", err))
-			//				continue
-			//			}
 		}
 	}
 

@@ -166,6 +166,36 @@ func main() {
 				binanceStat[trade.Symbol] = trade
 			default:
 			}
+
+			// to remove busy loop
+			select {
+			case <-ctx.Done():
+				fmt.Println("\nmerge function is stopping")
+				break Loop2
+			case telegramMsg, ok := <-telegramCh:
+				if !ok {
+					break Loop2
+				}
+				fmt.Println(telegramMsg, binanceStat)
+			case trade, ok := <-btcusdtCh:
+				if !ok {
+					btcusdtCh = nil
+					continue
+				}
+				binanceStat[trade.Symbol] = trade
+			case trade, ok := <-ethusdtCh:
+				if !ok {
+					ethusdtCh = nil
+					continue
+				}
+				binanceStat[trade.Symbol] = trade
+			case trade, ok := <-tonusdtCh:
+				if !ok {
+					tonusdtCh = nil
+					continue
+				}
+				binanceStat[trade.Symbol] = trade
+			}
 		}
 	})
 
