@@ -36,7 +36,7 @@ func (b *Bot) HandleUpdates(result []telegram.Update, ruleCh chan<- Rule) error 
 	for _, u := range result {
 		switch u.Message.Text {
 		case "/help":
-			err := b.TelegramClient.SendMessage(u.Message.Chat.ID, "there will be help here")
+			err := b.TelegramClient.SendMessage(u.Message.Chat.ID, "Формат: валюта оператор сумма\nВалюты: btc, eth, ton\nОператоры: <, =, >\nПример: btc > 50000")
 			if err != nil {
 				errs = errors.Join(errs, fmt.Errorf("can't send message when user sent /help: %w", err))
 				continue
