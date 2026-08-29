@@ -15,6 +15,7 @@ type Bot struct {
 }
 
 type Rule struct {
+	ChatID   int64
 	Currency string
 	Op       string // operator
 	Amount   float64
@@ -29,7 +30,7 @@ func New(tc *telegram.Client) (*Bot, error) {
 	}, nil
 }
 
-func (b *Bot) HandleUpdates(result []telegram.Update, telegramCh chan<- string) error {
+func (b *Bot) HandleUpdates(result []telegram.Update, ruleCh chan<- Rule) error {
 	var errs error
 
 	for _, u := range result {
@@ -58,9 +59,8 @@ func (b *Bot) HandleUpdates(result []telegram.Update, telegramCh chan<- string) 
 				continue
 			}
 
-			// logic what to do after getting the correct user input
-			s := strconv.FormatFloat(r.Amount, 'f', -1, 64) + r.Currency + r.Op
-			telegramCh <- s
+			r.ChatID = u.Message.Chat.ID
+			ruleCh <- *r
 		}
 	}
 

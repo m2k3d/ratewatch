@@ -4,9 +4,11 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"math"
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"sync"
 	"time"
 
@@ -17,12 +19,53 @@ import (
 	"github.com/joho/godotenv"
 )
 
+// priceEqualEpsilon is how close price must get to a rule's amount
+// for the "=" operator to count as a match.
+const priceEqualEpsilon = 0.01
+
+func ruleTriggered(op string, price, amount float64) bool {
+	switch op {
+	case ">":
+		return price > amount
+	case "<":
+		return price < amount
+	case "=":
+		return math.Abs(price-amount) <= priceEqualEpsilon
+	default:
+		return false
+	}
+}
+
+// checkRules evaluates every rule registered for currency against trade's
+// price, notifies the owning chat for each match, and drops matched rules
+// so they fire only once.
+func checkRules(tClient *telegram.Client, rules map[string][]bot.Rule, currency string, trade binance.Trade) {
+	price, err := strconv.ParseFloat(trade.Price, 64)
+	if err != nil {
+		log.Printf("can't parse price %q for %s: %s", trade.Price, currency, err)
+		return
+	}
+
+	remaining := rules[currency][:0]
+	for _, r := range rules[currency] {
+		if !ruleTriggered(r.Op, price, r.Amount) {
+			remaining = append(remaining, r)
+			continue
+		}
+		msg := fmt.Sprintf("%s %s %s: current price is %s", currency, r.Op, strconv.FormatFloat(r.Amount, 'f', -1, 64), trade.Price)
+		if err := tClient.SendMessage(r.ChatID, msg); err != nil {
+			log.Printf("can't notify chat %d: %s", r.ChatID, err)
+		}
+	}
+	rules[currency] = remaining
+}
+
 func main() {
 	var tgWG sync.WaitGroup
 	var binanceWG sync.WaitGroup
 	var transferWG sync.WaitGroup
 
-	telegramCh := make(chan string)
+	ruleCh := make(chan bot.Rule)
 	btcusdtCh := make(chan binance.Trade)
 	ethusdtCh := make(chan binance.Trade)
 	tonusdtCh := make(chan binance.Trade)
@@ -54,7 +97,7 @@ func main() {
 			select {
 			case <-ctx.Done(): // ctrl + c
 				fmt.Println("shutting down telegram client")
-				close(telegramCh)
+				close(ruleCh)
 				break Loop1
 			default:
 				var err error
@@ -64,7 +107,7 @@ func main() {
 				if err != nil {
 					log.Printf("something went wrong while trying to get updates: %s", err)
 				} else {
-					err = app.HandleUpdates(updates, telegramCh)
+					err = app.HandleUpdates(updates, ruleCh)
 					if err != nil {
 						log.Printf("something went wrong in logic part: %s", err)
 					}
@@ -118,6 +161,7 @@ func main() {
 		})
 
 	binanceStat := make(map[string]binance.Trade, 3)
+	rules := make(map[string][]bot.Rule, 3)
 	transferWG.Go(func() {
 	Loop2:
 		for {
@@ -129,72 +173,35 @@ func main() {
 			}
 
 			select {
-			case telegramMsg, ok := <-telegramCh:
-				if !ok {
-					break Loop2
-				}
-				fmt.Println(telegramMsg, binanceStat)
-			default:
-			}
-
-			select {
-			case trade, ok := <-btcusdtCh:
-				if !ok {
-					btcusdtCh = nil
-					break
-				}
-				binanceStat[trade.Symbol] = trade
-			default:
-			}
-
-			select {
-			case trade, ok := <-ethusdtCh:
-				if !ok {
-					ethusdtCh = nil
-					break
-				}
-				binanceStat[trade.Symbol] = trade
-			default:
-			}
-
-			select {
-			case trade, ok := <-tonusdtCh:
-				if !ok {
-					tonusdtCh = nil
-					break
-				}
-				binanceStat[trade.Symbol] = trade
-			default:
-			}
-
-			// to remove busy loop
-			select {
 			case <-ctx.Done():
 				fmt.Println("\nmerge function is stopping")
 				break Loop2
-			case telegramMsg, ok := <-telegramCh:
+			case r, ok := <-ruleCh:
 				if !ok {
 					break Loop2
 				}
-				fmt.Println(telegramMsg, binanceStat)
+				rules[r.Currency] = append(rules[r.Currency], r)
 			case trade, ok := <-btcusdtCh:
 				if !ok {
 					btcusdtCh = nil
 					continue
 				}
 				binanceStat[trade.Symbol] = trade
+				checkRules(tClient, rules, "btc", trade)
 			case trade, ok := <-ethusdtCh:
 				if !ok {
 					ethusdtCh = nil
 					continue
 				}
 				binanceStat[trade.Symbol] = trade
+				checkRules(tClient, rules, "eth", trade)
 			case trade, ok := <-tonusdtCh:
 				if !ok {
 					tonusdtCh = nil
 					continue
 				}
 				binanceStat[trade.Symbol] = trade
+				checkRules(tClient, rules, "ton", trade)
 			}
 		}
 	})
