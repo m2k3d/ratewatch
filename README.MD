@@ -1,38 +1,28 @@
 # RateWatch
-
-Учебный Telegram-бот на Go, который следит за курсами криптовалют на Binance
-(BTC, ETH, TON) и присылает уведомление, когда цена пересекает заданный
-пользователем порог. Все данные хранятся в оперативной памяти, без базы
-данных.
-
-## Как это работает
-
-- **Telegram**: бот опрашивает telegram в отдельной горутине.
-- **Binance**: для каждой пары (`btcusdt`, `ethusdt`, `tonusdt`) открывается
-  свой websocket-стрим `@trade`, каждый в своей горутине.
-- **Сопоставление**: одна горутина-объединитель (`select` по всем каналам
-  сразу) хранит активные правила и на каждом новом трейде проверяет их —
-  без мьютексов, потому что состояние читает и пишет только эта горутина.
-- Завершение работы — по `Ctrl+C`, через `context`
-
-## Запуск
-
-Нужно положить телеграм токен в .env (более подробно смотрите .env.example)
+An educational Telegram bot in Go that tracks cryptocurrency rates on Binance
+(BTC, ETH, TON) and sends a notification when the price crosses a threshold set
+by the user. All data is stored in memory, without a database.
+## How it works
+- **Telegram**: the bot polls telegram in a separate goroutine.
+- **Binance**: for each pair (`btcusdt`, `ethusdt`, `tonusdt`) its own
+  `@trade` websocket stream is opened, each in its own goroutine.
+- **Matching**: a single merger goroutine (`select` over all channels
+  at once) holds the active rules and checks them on every new trade —
+  without mutexes, because only this goroutine reads and writes the state.
+- Shutdown — via `Ctrl+C`, through `context`
+## Running
+You need to put the telegram token in .env (see .env.example for more details)
 ```
 go run cmd/ratewatch/main.go
 ```
-
-## Команды бота
-
-- `/help` — краткая справка.
-- Правило в формате `<валюта> <оператор> <сумма>`, например:
+## Bot commands
+- `/help` — a short reference.
+- A rule in the format `<currency> <operator> <amount>`, for example:
   ```
   btc > 50000
   eth < 3000
   ```
-
-## Ограничения / что не сделано
-
-- Правила не сохраняются между перезапусками (только в памяти).
-- Нет команды посмотреть/удалить уже добавленные правила.
-- Список валют захардкожен (`btc`, `eth`, `ton`).
+## Limitations / what's not done
+- Rules are not persisted between restarts (in memory only).
+- There is no command to view/delete already added rules.
+- The currency list is hardcoded (`btc`, `eth`, `ton`).
