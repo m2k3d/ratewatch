@@ -107,7 +107,7 @@ func main() {
 				if err != nil {
 					log.Printf("something went wrong while trying to get updates: %s", err)
 				} else {
-					err = app.HandleUpdates(updates, ruleCh)
+					err = app.HandleUpdates(ctx, updates, ruleCh)
 					if err != nil {
 						log.Printf("something went wrong in logic part: %s", err)
 					}
@@ -117,48 +117,10 @@ func main() {
 		}
 	})
 
-	btcusdt, err := binance.New("btcusdt")
-	if err != nil {
-		log.Fatal(err)
-	}
-	ethusdt, err := binance.New("ethusdt")
-	if err != nil {
-		log.Fatal(err)
-	}
-	tonusdt, err := binance.New("tonusdt")
-	if err != nil {
-		log.Fatal(err)
-	}
-
 	log.Println("connecting to binance")
-	binanceWG.Go(
-		func() {
-			log.Println("connecting to websocket (btcusdt)")
-			err = btcusdt.RequestHandler(btcusdtCh, ctx)
-			if err != nil {
-				fmt.Println(err)
-			}
-			btcusdt.Conn.Close()
-		})
-	binanceWG.Go(
-		func() {
-			log.Println("connecting to websocket (ethusdt)")
-			err = ethusdt.RequestHandler(ethusdtCh, ctx)
-			if err != nil {
-				fmt.Println(err)
-			}
-			ethusdt.Conn.Close()
-		})
-
-	binanceWG.Go(
-		func() {
-			log.Println("connecting to websocket (tonusdt)")
-			err = tonusdt.RequestHandler(tonusdtCh, ctx)
-			if err != nil {
-				fmt.Println(err)
-			}
-			tonusdt.Conn.Close()
-		})
+	binanceWG.Go(func() { binance.New("btcusdt").Run(ctx, btcusdtCh) })
+	binanceWG.Go(func() { binance.New("ethusdt").Run(ctx, ethusdtCh) })
+	binanceWG.Go(func() { binance.New("tonusdt").Run(ctx, tonusdtCh) })
 
 	binanceStat := make(map[string]binance.Trade, 3)
 	rules := make(map[string][]bot.Rule, 3)

@@ -1,6 +1,7 @@
 package bot
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"slices"
@@ -30,7 +31,7 @@ func New(tc *telegram.Client) (*Bot, error) {
 	}, nil
 }
 
-func (b *Bot) HandleUpdates(result []telegram.Update, ruleCh chan<- Rule) error {
+func (b *Bot) HandleUpdates(ctx context.Context, result []telegram.Update, ruleCh chan<- Rule) error {
 	var errs error
 
 	for _, u := range result {
@@ -60,7 +61,11 @@ func (b *Bot) HandleUpdates(result []telegram.Update, ruleCh chan<- Rule) error 
 			}
 
 			r.ChatID = u.Message.Chat.ID
-			ruleCh <- *r
+			select {
+			case ruleCh <- *r:
+			case <-ctx.Done():
+				return errors.Join(errs, ctx.Err())
+			}
 		}
 	}
 
