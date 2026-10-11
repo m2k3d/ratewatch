@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"slices"
 	"strconv"
 	"strings"
@@ -35,6 +36,10 @@ func (b *Bot) HandleUpdates(ctx context.Context, result []telegram.Update, ruleC
 	var errs error
 
 	for _, u := range result {
+		if u.Message == nil {
+			continue
+		}
+
 		switch u.Message.Text {
 		case "/help":
 			err := b.TelegramClient.SendMessage(u.Message.Chat.ID, "Формат: валюта оператор сумма\nВалюты: btc, eth, ton\nОператоры: <, =, >\nПример: btc > 50000")
@@ -101,7 +106,7 @@ func newRule(m string) (*Rule, error) {
 	}
 
 	amount, err := strconv.ParseFloat(wordsArray[2], 64)
-	if err != nil {
+	if err != nil || math.IsNaN(amount) || math.IsInf(amount, 0) {
 		errs = errors.Join(errs, wrongAmount)
 	} else if wordsArray[1] == "<" && amount == 0 {
 		errs = errors.Join(errs, invalidOperatorWithZeroAmount)

@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"math"
 	"net/http"
 	"os"
 	"os/signal"
@@ -19,43 +18,47 @@ import (
 	"github.com/joho/godotenv"
 )
 
-// priceEqualEpsilon is how close price must get to a rule's amount
-// for the "=" operator to count as a match.
-const priceEqualEpsilon = 0.01
-
-func ruleTriggered(op string, price, amount float64) bool {
+// ruleTriggered reports whether price matches the rule. For "=" it is enough
+// that amount lies between the previous and the current price, since trades
+// often jump over the exact target.
+func ruleTriggered(op string, prev, price, amount float64) bool {
 	switch op {
 	case ">":
 		return price > amount
 	case "<":
 		return price < amount
 	case "=":
-		return math.Abs(price-amount) <= priceEqualEpsilon
+		return min(prev, price) <= amount && amount <= max(prev, price)
 	default:
 		return false
 	}
 }
 
-// checkRules evaluates every rule registered for currency against trade's
-// price, notifies the owning chat for each match, and drops matched rules
-// so they fire only once.
-func checkRules(tClient *telegram.Client, rules map[string][]bot.Rule, currency string, trade binance.Trade) {
+func checkRules(tClient *telegram.Client, notifyWG *sync.WaitGroup, rules map[string][]bot.Rule, prevPrices map[string]float64, currency string, trade binance.Trade) {
 	price, err := strconv.ParseFloat(trade.Price, 64)
 	if err != nil {
 		log.Printf("can't parse price %q for %s: %s", trade.Price, currency, err)
 		return
 	}
 
+	prev, ok := prevPrices[currency]
+	if !ok {
+		prev = price
+	}
+	prevPrices[currency] = price
+
 	remaining := rules[currency][:0]
 	for _, r := range rules[currency] {
-		if !ruleTriggered(r.Op, price, r.Amount) {
+		if !ruleTriggered(r.Op, prev, price, r.Amount) {
 			remaining = append(remaining, r)
 			continue
 		}
 		msg := fmt.Sprintf("%s %s %s: current price is %s", currency, r.Op, strconv.FormatFloat(r.Amount, 'f', -1, 64), trade.Price)
-		if err := tClient.SendMessage(r.ChatID, msg); err != nil {
-			log.Printf("can't notify chat %d: %s", r.ChatID, err)
-		}
+		notifyWG.Go(func() {
+			if err := tClient.SendMessage(r.ChatID, msg); err != nil {
+				log.Printf("can't notify chat %d: %s", r.ChatID, err)
+			}
+		})
 	}
 	rules[currency] = remaining
 }
@@ -64,6 +67,7 @@ func main() {
 	var tgWG sync.WaitGroup
 	var binanceWG sync.WaitGroup
 	var transferWG sync.WaitGroup
+	var notifyWG sync.WaitGroup
 
 	ruleCh := make(chan bot.Rule)
 	btcusdtCh := make(chan binance.Trade)
@@ -124,6 +128,7 @@ func main() {
 
 	binanceStat := make(map[string]binance.Trade, 3)
 	rules := make(map[string][]bot.Rule, 3)
+	prevPrices := make(map[string]float64, 3)
 	transferWG.Go(func() {
 	Loop2:
 		for {
@@ -149,27 +154,29 @@ func main() {
 					continue
 				}
 				binanceStat[trade.Symbol] = trade
-				checkRules(tClient, rules, "btc", trade)
+				checkRules(tClient, &notifyWG, rules, prevPrices, "btc", trade)
 			case trade, ok := <-ethusdtCh:
 				if !ok {
 					ethusdtCh = nil
 					continue
 				}
 				binanceStat[trade.Symbol] = trade
-				checkRules(tClient, rules, "eth", trade)
+				checkRules(tClient, &notifyWG, rules, prevPrices, "eth", trade)
 			case trade, ok := <-tonusdtCh:
 				if !ok {
 					tonusdtCh = nil
 					continue
 				}
 				binanceStat[trade.Symbol] = trade
-				checkRules(tClient, rules, "ton", trade)
+				checkRules(tClient, &notifyWG, rules, prevPrices, "ton", trade)
 			}
 		}
 	})
 
 	binanceWG.Wait()
 	tgWG.Wait()
+	transferWG.Wait()
+	notifyWG.Wait()
 }
 
 func mustToken() string {

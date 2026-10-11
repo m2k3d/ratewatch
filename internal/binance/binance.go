@@ -15,8 +15,6 @@ import (
 const (
 	streamURL = "wss://stream.binance.com:9443/ws/"
 
-	// Binance pings every 20s and drops the connection if it gets no pong
-	// within a minute, so a minute of silence means the connection is dead.
 	readTimeout  = time.Minute
 	writeTimeout = 10 * time.Second
 
@@ -43,9 +41,6 @@ func New(symbol string) *Client {
 	return &Client{symbol: symbol}
 }
 
-// Run streams trades into binanceCh until ctx is cancelled, reconnecting
-// with exponential backoff whenever the connection fails. It closes
-// binanceCh on return.
 func (c *Client) Run(ctx context.Context, binanceCh chan<- Trade) {
 	defer close(binanceCh)
 
@@ -57,8 +52,6 @@ func (c *Client) Run(ctx context.Context, binanceCh chan<- Trade) {
 			return
 		}
 
-		// The connection lived long enough to count as healthy,
-		// so start the backoff over instead of growing it.
 		if time.Since(started) > maxBackoff {
 			backoff = minBackoff
 		}
@@ -73,7 +66,6 @@ func (c *Client) Run(ctx context.Context, binanceCh chan<- Trade) {
 	}
 }
 
-// stream runs a single websocket connection until it fails or ctx is cancelled.
 func (c *Client) stream(ctx context.Context, binanceCh chan<- Trade) error {
 	conn, _, err := websocket.DefaultDialer.DialContext(ctx, streamURL+c.symbol+"@trade", nil)
 	if err != nil {
@@ -81,7 +73,6 @@ func (c *Client) stream(ctx context.Context, binanceCh chan<- Trade) error {
 	}
 	defer conn.Close()
 
-	// Closing the connection is the only way to unblock ReadMessage.
 	stop := context.AfterFunc(ctx, func() { conn.Close() })
 	defer stop()
 
