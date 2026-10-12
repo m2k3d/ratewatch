@@ -73,6 +73,8 @@ func (c *Client) stream(ctx context.Context, binanceCh chan<- Trade) error {
 	}
 	defer conn.Close()
 
+	log.Printf("binance %s: handshake was successful", c.symbol)
+
 	stop := context.AfterFunc(ctx, func() { conn.Close() })
 	defer stop()
 
@@ -86,6 +88,8 @@ func (c *Client) stream(ctx context.Context, binanceCh chan<- Trade) error {
 		return err
 	})
 
+	first := true
+
 	for {
 		conn.SetReadDeadline(time.Now().Add(readTimeout))
 		_, msg, err := conn.ReadMessage()
@@ -96,6 +100,11 @@ func (c *Client) stream(ctx context.Context, binanceCh chan<- Trade) error {
 		var t Trade
 		if err := json.Unmarshal(msg, &t); err != nil {
 			return fmt.Errorf("can't unmarshal trade: %w", err)
+		}
+
+		if first {
+			log.Printf("binance %s: receiving trades, price %s", c.symbol, t.Price)
+			first = false
 		}
 
 		select {
