@@ -7,7 +7,10 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"strconv"
 	"time"
+
+	"ratewatch/internal/market"
 
 	"github.com/gorilla/websocket"
 )
@@ -23,31 +26,23 @@ const (
 )
 
 type Client struct {
-	symbol string
+	currency string
+	symbol   string
 }
 
-type Trade struct {
-	EventType    string `json:"e"`
-	EventTime    int64  `json:"E"`
-	Symbol       string `json:"s"`
-	TradeID      int64  `json:"t"`
-	Price        string `json:"p"`
-	Quantity     string `json:"q"`
-	TradeTime    int64  `json:"T"`
-	IsBuyerMaker bool   `json:"m"`
+type trade struct {
+	Price string `json:"p"`
 }
 
-func New(symbol string) *Client {
-	return &Client{symbol: symbol}
+func New(currency string) *Client {
+	return &Client{currency: currency, symbol: currency + "usdt"}
 }
 
-func (c *Client) Run(ctx context.Context, binanceCh chan<- Trade) {
-	defer close(binanceCh)
-
+func (c *Client) Run(ctx context.Context, quotes chan<- market.Quote) {
 	backoff := minBackoff
 	for {
 		started := time.Now()
-		err := c.stream(ctx, binanceCh)
+		err := c.stream(ctx, quotes)
 		if ctx.Err() != nil {
 			return
 		}
@@ -66,7 +61,7 @@ func (c *Client) Run(ctx context.Context, binanceCh chan<- Trade) {
 	}
 }
 
-func (c *Client) stream(ctx context.Context, binanceCh chan<- Trade) error {
+func (c *Client) stream(ctx context.Context, quotes chan<- market.Quote) error {
 	conn, _, err := websocket.DefaultDialer.DialContext(ctx, streamURL+c.symbol+"@trade", nil)
 	if err != nil {
 		return fmt.Errorf("can't connect: %w", err)
@@ -97,9 +92,16 @@ func (c *Client) stream(ctx context.Context, binanceCh chan<- Trade) error {
 			return err
 		}
 
-		var t Trade
+		var t trade
 		if err := json.Unmarshal(msg, &t); err != nil {
-			return fmt.Errorf("can't unmarshal trade: %w", err)
+			log.Printf("binance %s: can't unmarshal trade: %s", c.symbol, err)
+			continue
+		}
+
+		price, err := strconv.ParseFloat(t.Price, 64)
+		if err != nil {
+			log.Printf("binance %s: can't parse price %q: %s", c.symbol, t.Price, err)
+			continue
 		}
 
 		if first {
@@ -108,7 +110,7 @@ func (c *Client) stream(ctx context.Context, binanceCh chan<- Trade) error {
 		}
 
 		select {
-		case binanceCh <- t:
+		case quotes <- market.Quote{Currency: c.currency, Price: price}:
 		case <-ctx.Done():
 			return ctx.Err()
 		}

@@ -1,26 +1,24 @@
 package telegram
 
 import (
+	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
-	"net/url"
-	"strconv"
 	"strings"
+	"time"
 )
 
-type Response struct {
-	Ok          bool     `json:"ok"`
-	Result      []Update `json:"result"`
-	Description string   `json:"description"`
-	ErrorCode   int      `json:"error_code"`
-}
+const (
+	apiURL      = "https://api.telegram.org"
+	PollTimeout = 30 * time.Second
+)
 
 type Update struct {
 	UpdateID int      `json:"update_id"`
-	Message  *Message `json:"message"` // nil for updates that aren't new messages
+	Message  *Message `json:"message"`
 }
 
 type Message struct {
@@ -34,102 +32,90 @@ type Chat struct {
 	Type string `json:"type"`
 }
 
-type SendMessageResponse struct {
-	Ok          bool   `json:"ok"`
-	Description string `json:"description"`
-	ErrorCode   int    `json:"error_code"`
+type response struct {
+	Ok          bool            `json:"ok"`
+	Result      json.RawMessage `json:"result"`
+	Description string          `json:"description"`
+	ErrorCode   int             `json:"error_code"`
 }
 
 type Client struct {
-	Token  string
-	Client http.Client
-	Offset int
+	token  string
+	http   *http.Client
+	url    string
+	offset int
 }
 
-func New(token string, client http.Client, offset int) (*Client, error) {
+func New(token string, httpClient *http.Client) (*Client, error) {
 	if strings.TrimSpace(token) == "" {
 		return nil, errors.New("bot token must be specified")
 	}
-	return &Client{
-		Token:  token,
-		Client: client,
-		Offset: offset,
-	}, nil
+	return &Client{token: token, http: httpClient, url: apiURL}, nil
 }
 
-func (c *Client) GetUpdates() ([]Update, error) {
-	apiURL := "https://api.telegram.org/bot" + c.Token + "/getUpdates"
+func (c *Client) GetUpdates(ctx context.Context) ([]Update, error) {
+	params := map[string]int{
+		"offset":  c.offset,
+		"timeout": int(PollTimeout.Seconds()),
+	}
 
-	q := url.Values{}
-	q.Set("offset", strconv.Itoa(c.Offset))
-	fullURL := apiURL + "?" + q.Encode()
+	var updates []Update
+	if err := c.call(ctx, "getUpdates", params, &updates); err != nil {
+		return nil, err
+	}
 
-	resp, err := c.Client.Get(fullURL)
+	if len(updates) > 0 {
+		c.offset = updates[len(updates)-1].UpdateID + 1
+	}
+	return updates, nil
+}
+
+func (c *Client) SendMessage(ctx context.Context, chatID int64, text string) error {
+	params := map[string]any{
+		"chat_id": chatID,
+		"text":    text,
+	}
+	return c.call(ctx, "sendMessage", params, nil)
+}
+
+func (c *Client) call(ctx context.Context, method string, params, result any) error {
+	body, err := json.Marshal(params)
 	if err != nil {
-		errWithNoToken := sanitize(err.Error(), c.Token)
-		return nil, fmt.Errorf("%s", errWithNoToken)
+		return fmt.Errorf("%s: can't marshal params: %w", method, err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.url+"/bot"+c.token+"/"+method, bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("%s: %s", method, c.sanitize(err))
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		return fmt.Errorf("%s: %s", method, c.sanitize(err))
 	}
 	defer resp.Body.Close()
 
-	ans, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("can't read response: %w", err)
-	}
-
-	var r Response
-	err = json.Unmarshal(ans, &r)
-	if err != nil {
-		return nil, fmt.Errorf("can't unmarshal: %w", err)
+	var r response
+	if err := json.NewDecoder(resp.Body).Decode(&r); err != nil {
+		return fmt.Errorf("%s: can't decode response, status %d: %w", method, resp.StatusCode, err)
 	}
 	if !r.Ok {
-		return nil, fmt.Errorf("error from the telegram: %s. Error code: %d", r.Description, r.ErrorCode)
+		return fmt.Errorf("%s: error from telegram %d: %s", method, r.ErrorCode, r.Description)
 	}
 
-	next := c.Offset
-	if len(r.Result) > 0 {
-		next = r.Result[len(r.Result)-1].UpdateID + 1
+	if result == nil {
+		return nil
 	}
-	c.Offset = next
-
-	return r.Result, nil
-}
-
-func (c *Client) SendMessage(chatID int64, text string) error {
-	apiURL := "https://api.telegram.org/bot" + c.Token + "/sendMessage"
-
-	q := url.Values{}
-	q.Set("chat_id", strconv.FormatInt(chatID, 10))
-	q.Set("text", text)
-
-	fullURL := apiURL + "?" + q.Encode()
-
-	resp, err := c.Client.Get(fullURL)
-	if err != nil {
-		errWithNoToken := sanitize(err.Error(), c.Token)
-		return fmt.Errorf("%s", errWithNoToken)
+	if err := json.Unmarshal(r.Result, result); err != nil {
+		return fmt.Errorf("%s: can't unmarshal result: %w", method, err)
 	}
-	defer resp.Body.Close()
-
-	data, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return err
-	}
-	var r SendMessageResponse
-	err = json.Unmarshal(data, &r)
-	if err != nil {
-		return fmt.Errorf("can't unmarshal data: %w", err)
-	}
-
-	if resp.StatusCode != 200 {
-		return fmt.Errorf("can't do the request, status code: %d. Description: %s", resp.StatusCode, r.Description)
-	}
-
 	return nil
 }
 
-func sanitize(s, token string) string {
-	if token == "" {
-		return s
-	}
-	return strings.ReplaceAll(s, token, "#####")
+func (c *Client) sanitize(err error) string {
+	return strings.ReplaceAll(err.Error(), c.token, "#####")
 }

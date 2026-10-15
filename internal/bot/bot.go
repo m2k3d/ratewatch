@@ -4,124 +4,93 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"math"
-	"slices"
-	"strconv"
+	"log"
 	"strings"
+	"time"
 
+	"ratewatch/internal/alert"
+	"ratewatch/internal/market"
 	"ratewatch/internal/telegram"
 )
 
+const retryDelay = 3 * time.Second
+
+const (
+	startText   = "Привет! Я пришлю сообщение, когда курс криптовалюты достигнет нужного значения.\nОтправь /help, чтобы узнать, как добавить правило."
+	unknownText = "Не понял, отправь /help"
+	failedText  = "Не удалось сохранить правило, попробуй позже"
+)
+
+var helpText = "Формат: валюта оператор сумма\nВалюты: " + strings.Join(market.Currencies, ", ") + "\nОператоры: <, =, >\nПример: btc > 50000"
+
+type Client interface {
+	GetUpdates(ctx context.Context) ([]telegram.Update, error)
+	SendMessage(ctx context.Context, chatID int64, text string) error
+}
+
+type RuleAdder interface {
+	AddRule(ctx context.Context, r alert.Rule) (alert.Rule, error)
+}
+
 type Bot struct {
-	TelegramClient *telegram.Client
+	client Client
+	rules  RuleAdder
 }
 
-type Rule struct {
-	ChatID   int64
-	Currency string
-	Op       string // operator
-	Amount   float64
+func New(client Client, rules RuleAdder) *Bot {
+	return &Bot{client: client, rules: rules}
 }
 
-func New(tc *telegram.Client) (*Bot, error) {
-	if tc == nil {
-		return nil, errors.New("empty telegram client")
-	}
-	return &Bot{
-		TelegramClient: tc,
-	}, nil
-}
-
-func (b *Bot) HandleUpdates(ctx context.Context, result []telegram.Update, ruleCh chan<- Rule) error {
-	var errs error
-
-	for _, u := range result {
-		if u.Message == nil {
+func (b *Bot) Run(ctx context.Context) {
+	for {
+		updates, err := b.client.GetUpdates(ctx)
+		if ctx.Err() != nil {
+			return
+		}
+		if err != nil {
+			log.Printf("can't get updates: %s", err)
+			select {
+			case <-time.After(retryDelay):
+			case <-ctx.Done():
+				return
+			}
 			continue
 		}
 
-		switch u.Message.Text {
-		case "/help":
-			err := b.TelegramClient.SendMessage(u.Message.Chat.ID, "Формат: валюта оператор сумма\nВалюты: btc, eth, ton\nОператоры: <, =, >\nПример: btc > 50000")
-			if err != nil {
-				errs = errors.Join(errs, fmt.Errorf("can't send message when user sent /help: %w", err))
+		for _, u := range updates {
+			if u.Message == nil {
 				continue
 			}
-		default:
-			r, err := newRule(u.Message.Text)
-			if err != nil && errors.Is(err, ErrMessageNotTemplated) {
-				err = b.TelegramClient.SendMessage(u.Message.Chat.ID, "didn't understand, send /help")
-				if err != nil {
-					errs = errors.Join(errs, fmt.Errorf("failed to send message: %w", err))
-					continue
-				}
-				continue
-			} else if err != nil {
-				err = b.TelegramClient.SendMessage(u.Message.Chat.ID, err.Error())
-				if err != nil {
-					errs = errors.Join(errs, fmt.Errorf("failed to send unknown command message: %w", err))
-					continue
-				}
-				continue
-			}
-
-			r.ChatID = u.Message.Chat.ID
-			select {
-			case ruleCh <- *r:
-			case <-ctx.Done():
-				return errors.Join(errs, ctx.Err())
+			chatID := u.Message.Chat.ID
+			if err := b.client.SendMessage(ctx, chatID, b.reply(ctx, chatID, u.Message.Text)); err != nil {
+				log.Printf("can't reply to chat %d: %s", chatID, err)
 			}
 		}
 	}
-
-	return errs
 }
 
-var (
-	invalidCurrency               = errors.New("invalid currency")
-	invalidOperator               = errors.New("invalid operator")
-	wrongAmount                   = errors.New("wrong amount")
-	lowAmount                     = errors.New("amount can't be less than 0")
-	ErrMessageNotTemplated        = errors.New("non-templated message")
-	invalidOperatorWithZeroAmount = errors.New("invalid operator \"<\" with 0 amount")
-)
-
-func newRule(m string) (*Rule, error) {
-	var errs error
-
-	currencies := []string{"btc", "eth", "ton"}
-	operators := []string{"<", "=", ">"}
-
-	wordsArray := strings.Fields(m)
-
-	if len(wordsArray) != 3 {
-		return nil, ErrMessageNotTemplated
+func (b *Bot) reply(ctx context.Context, chatID int64, text string) string {
+	switch strings.TrimSpace(text) {
+	case "/start":
+		return startText
+	case "/help":
+		return helpText
 	}
 
-	if c := slices.Contains(currencies, wordsArray[0]); !c {
-		errs = errors.Join(errs, invalidCurrency)
+	r, err := parseRule(text)
+	if errors.Is(err, errNotRule) {
+		return unknownText
 	}
-	if c := slices.Contains(operators, wordsArray[1]); !c {
-		errs = errors.Join(errs, invalidOperator)
-	}
-
-	amount, err := strconv.ParseFloat(wordsArray[2], 64)
-	if err != nil || math.IsNaN(amount) || math.IsInf(amount, 0) {
-		errs = errors.Join(errs, wrongAmount)
-	} else if wordsArray[1] == "<" && amount == 0 {
-		errs = errors.Join(errs, invalidOperatorWithZeroAmount)
+	if err != nil {
+		return err.Error()
 	}
 
-	if amount < 0.0 {
-		errs = errors.Join(errs, lowAmount)
+	r.ChatID = chatID
+	r, err = b.rules.AddRule(ctx, r)
+	if err != nil {
+		log.Printf("can't add rule for chat %d: %s", chatID, err)
+		return failedText
 	}
 
-	if errs != nil {
-		return nil, errs
-	}
-	return &Rule{
-		Currency: wordsArray[0],
-		Op:       wordsArray[1],
-		Amount:   amount,
-	}, nil
+	return fmt.Sprintf("Правило #%d сохранено: %s", r.ID, r)
 }
