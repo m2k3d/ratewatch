@@ -1,5 +1,30 @@
 services:
   ratewatch:
     build: .
-    env_file: .env 
+    env_file: .env
+    environment:
+      DATABASE_URL: postgres://ratewatch:ratewatch@postgres:5432/ratewatch?sslmode=disable
+    depends_on:
+      postgres:
+        condition: service_healthy
     restart: unless-stopped
+
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: ratewatch
+      POSTGRES_PASSWORD: ratewatch
+      POSTGRES_DB: ratewatch
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ratewatch -d ratewatch"]
+      interval: 2s
+      timeout: 3s
+      retries: 15
+    restart: unless-stopped
+
+volumes:
+  pgdata:
